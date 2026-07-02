@@ -2734,6 +2734,50 @@ body.mobile .boardFxPop{
   filter:drop-shadow(0 0 7px rgba(255,221,87,.65));
 }
 
+
+/* v62 multiplayer lobby */
+.mpBox{
+  margin-top:18px;
+  padding:14px;
+  border:2px dashed rgba(59,48,42,.45);
+  border-radius:16px;
+  background:#fffdf8;
+}
+.mpBox h2{margin-top:0}
+.mpInput{
+  width:100%;
+  padding:10px 12px;
+  border:1px solid #6b5144;
+  border-radius:10px;
+  background:#fff;
+  margin:5px 0 8px;
+}
+.mpBtn{font-weight:900}
+.mpBtn.primary{background:#2f241f;color:#fff}
+.mpStatus{
+  margin-top:8px;
+  font-size:13px;
+  font-weight:800;
+  color:#5d4a3f;
+  line-height:1.35;
+}
+.mpRoomBadge{
+  position:fixed;
+  left:12px;
+  top:12px;
+  z-index:1200;
+  padding:7px 10px;
+  border-radius:999px;
+  background:rgba(47,36,31,.88);
+  color:#fff5dd;
+  font-size:12px;
+  font-weight:1000;
+  display:none;
+  pointer-events:none;
+}
+body.multiplayer .mpRoomBadge{display:block}
+body.mobile .mpRoomBadge{top:auto;bottom:8px;left:8px;font-size:11px}
+
 </style>
 </head>
 <body>
@@ -2760,8 +2804,27 @@ body.mobile .boardFxPop{
     <button id="startBtn" class="startBtn">게임 시작</button>
 
 
+    <div class="mpBox">
+      <h2>친구랑 같이 하기 v62</h2>
+      <div class="small">GitHub Pages는 화면만 올려준다. 멀티는 아래 Worker 서버 주소가 필요하다. 당연히 한 번 더 귀찮다.</div>
+      <input id="mpServerUrl" class="mpInput" placeholder="Cloudflare Worker 주소 예: https://yutnori-multi.아이디.workers.dev">
+      <div class="row">
+        <input id="mpName" class="mpInput" placeholder="내 이름" style="flex:1;min-width:120px">
+        <input id="mpRoomCode" class="mpInput" placeholder="방 코드" maxlength="8" style="flex:1;min-width:100px;text-transform:uppercase">
+      </div>
+      <div class="row">
+        <button id="mpCreateBtn" class="mpBtn primary">방 만들기</button>
+        <button id="mpJoinBtn" class="mpBtn">방 참가</button>
+        <button id="mpCopyBtn" class="mpBtn">초대 링크 복사</button>
+      </div>
+      <div id="mpStatus" class="mpStatus">오프라인: 혼자 플레이 가능</div>
+    </div>
+
+
   </div>
 </div>
+
+<div id="mpRoomBadge" class="mpRoomBadge"></div>
 
 <div id="game" class="game hidden">
 
@@ -5535,6 +5598,189 @@ function addSvg(svg,tag,attrs,text){
 function escapeHtml(s){
   return s.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]));
 }
+
+
+/* v62: GitHub Pages + Cloudflare Worker multiplayer sync */
+const MP = {
+  ws:null,
+  connected:false,
+  room:null,
+  name:"",
+  applying:false,
+  lastSent:"",
+  sendTimer:null,
+  lastYut:null,
+  serverUrl:""
+};
+
+function mpEl(id){ return document.getElementById(id); }
+function mpSetStatus(text){ const el = mpEl("mpStatus"); if(el) el.textContent = text; }
+function mpNormalizeServerUrl(url){
+  url = String(url || "").trim().replace(/\/$/, "");
+  if(!url) return "";
+  return url;
+}
+function mpWsUrl(serverUrl, room){
+  const base = mpNormalizeServerUrl(serverUrl);
+  if(!base) throw new Error("Worker 주소가 비어 있음");
+  const wsBase = base.replace(/^https:/i,"wss:").replace(/^http:/i,"ws:");
+  return `${wsBase}/ws/${encodeURIComponent(room)}`;
+}
+function mpRandomRoom(){
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for(let i=0;i<6;i++) s += alphabet[Math.floor(Math.random()*alphabet.length)];
+  return s;
+}
+function mpInitFields(){
+  try{
+    const saved = localStorage.getItem("yutnoriMpServerV62") || "";
+    const name = localStorage.getItem("yutnoriMpNameV62") || "";
+    if(mpEl("mpServerUrl")) mpEl("mpServerUrl").value = saved;
+    if(mpEl("mpName")) mpEl("mpName").value = name;
+  }catch(e){}
+
+  const params = new URLSearchParams(location.search);
+  const room = params.get("room");
+  if(room && mpEl("mpRoomCode")) mpEl("mpRoomCode").value = room.toUpperCase();
+}
+function mpConnectionPayload(){
+  return {
+    game,
+    lastYut:MP.lastYut,
+    sentAt:Date.now()
+  };
+}
+function mpApplyPayload(payload){
+  if(!payload || !payload.game) return;
+  MP.applying = true;
+  try{
+    game = payload.game;
+    MP.lastYut = payload.lastYut || null;
+    rolling = false;
+    selectedPieceId = null;
+    selectedCardIndex = null;
+    selectedMoveDest = undefined;
+
+    document.getElementById("menu").classList.add("hidden");
+    document.getElementById("game").classList.remove("hidden");
+    fitGameToScreen();
+    detectDevice();
+    relocateYutAreaForDevice();
+    renderYut(MP.lastYut, false);
+    render();
+  }finally{
+    MP.applying = false;
+  }
+}
+function mpSendNow(){
+  if(!MP.connected || !MP.ws || MP.ws.readyState !== WebSocket.OPEN || MP.applying || !game) return;
+  const payload = mpConnectionPayload();
+  const text = JSON.stringify({type:"state", room:MP.room, name:MP.name, payload});
+  if(text === MP.lastSent) return;
+  MP.lastSent = text;
+  MP.ws.send(text);
+}
+function mpScheduleSend(){
+  if(!MP.connected || MP.applying || !game) return;
+  clearTimeout(MP.sendTimer);
+  MP.sendTimer = setTimeout(mpSendNow, 80);
+}
+function mpConnect(room, create){
+  const serverInput = mpEl("mpServerUrl");
+  const nameInput = mpEl("mpName");
+  const serverUrl = mpNormalizeServerUrl(serverInput ? serverInput.value : "");
+  const name = (nameInput && nameInput.value.trim()) || "익명";
+  room = String(room || "").trim().toUpperCase();
+  if(!serverUrl){ mpSetStatus("Worker 주소부터 넣어야 함. 서버 없이 멀티가 되길 바라는 건 기도에 가깝다."); return; }
+  if(!room){ mpSetStatus("방 코드가 비어 있음"); return; }
+
+  try{
+    localStorage.setItem("yutnoriMpServerV62", serverUrl);
+    localStorage.setItem("yutnoriMpNameV62", name);
+  }catch(e){}
+
+  if(MP.ws) try{ MP.ws.close(); }catch(e){}
+  MP.room = room;
+  MP.name = name;
+  MP.serverUrl = serverUrl;
+  mpSetStatus(`${room} 방 연결 중...`);
+
+  const ws = new WebSocket(mpWsUrl(serverUrl, room));
+  MP.ws = ws;
+  ws.onopen = ()=>{
+    MP.connected = true;
+    document.body.classList.add("multiplayer");
+    const badge = mpEl("mpRoomBadge");
+    if(badge) badge.textContent = `MULTI ${room}`;
+    mpSetStatus(`${room} 방 연결됨. ${create ? "게임 시작을 누르면 친구 화면도 같이 바뀜" : "방장 화면을 기다리는 중"}`);
+    ws.send(JSON.stringify({type:"hello", room, name}));
+    if(create && game) mpSendNow();
+  };
+  ws.onmessage = (ev)=>{
+    let msg;
+    try{ msg = JSON.parse(ev.data); }catch(e){ return; }
+    if(msg.type === "snapshot" && msg.payload){
+      mpApplyPayload(msg.payload);
+      mpSetStatus(`${room} 방 상태 불러옴`);
+    }
+    if(msg.type === "state" && msg.payload){
+      mpApplyPayload(msg.payload);
+      mpSetStatus(`${room} 방 동기화됨: ${msg.name || "상대"}`);
+    }
+    if(msg.type === "presence"){
+      mpSetStatus(`${room} 방 연결됨 · 접속 ${msg.count || "?"}명`);
+    }
+  };
+  ws.onclose = ()=>{
+    MP.connected = false;
+    document.body.classList.remove("multiplayer");
+    mpSetStatus("멀티 연결 끊김. 혼자 화면은 계속 돌아감");
+  };
+  ws.onerror = ()=>{
+    mpSetStatus("멀티 연결 오류. Worker 주소나 Cloudflare 설정을 확인해야 함");
+  };
+}
+function mpCopyInvite(){
+  const serverUrl = mpNormalizeServerUrl(mpEl("mpServerUrl")?.value || MP.serverUrl);
+  const room = (mpEl("mpRoomCode")?.value || MP.room || "").trim().toUpperCase();
+  const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}`;
+  try{ localStorage.setItem("yutnoriMpServerV62", serverUrl); }catch(e){}
+  navigator.clipboard?.writeText(url);
+  mpSetStatus(`초대 링크 복사: ${url} · 친구도 같은 Worker 주소를 넣어야 함`);
+}
+function mpBind(){
+  mpInitFields();
+  const createBtn = mpEl("mpCreateBtn");
+  const joinBtn = mpEl("mpJoinBtn");
+  const copyBtn = mpEl("mpCopyBtn");
+  if(createBtn) createBtn.addEventListener("click", ()=>{
+    const room = mpRandomRoom();
+    if(mpEl("mpRoomCode")) mpEl("mpRoomCode").value = room;
+    mpConnect(room, true);
+  });
+  if(joinBtn) joinBtn.addEventListener("click", ()=>{
+    const room = (mpEl("mpRoomCode")?.value || "").trim().toUpperCase();
+    mpConnect(room, false);
+  });
+  if(copyBtn) copyBtn.addEventListener("click", mpCopyInvite);
+}
+
+const __v62RenderYut = renderYut;
+renderYut = function(resultData, isRolling){
+  if(!isRolling && resultData) MP.lastYut = resultData;
+  return __v62RenderYut(resultData, isRolling);
+};
+
+const __v62Render = render;
+render = function(){
+  const out = __v62Render();
+  mpScheduleSend();
+  return out;
+};
+
+window.addEventListener("DOMContentLoaded", mpBind);
+
 </script>
 </body>
 </html>
