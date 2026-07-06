@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>윷놀이 v70</title>
+<title>윷놀이 v73</title>
 <style>
 *{box-sizing:border-box}
 body{
@@ -3239,7 +3239,7 @@ body.mobile .seatIntroRow.me{font-size:22px}
 
 
     <div class="mpBox">
-      <h2>친구랑 같이 하기 v70</h2>
+      <h2>친구랑 같이 하기 v73</h2>
       <div class="small">GitHub Pages는 화면, Worker는 실시간 멀티/채팅을 맡는다. 게임 시작 시 접속자 순서를 랜덤 배정한다.</div>
       <input id="mpServerUrl" class="mpInput" placeholder="Cloudflare Worker 주소 예: https://yutnori-multi.아이디.workers.dev">
       <div class="row">
@@ -7574,6 +7574,348 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
       try{ v72RenderYutPanelSilent((MP && MP.lastYut) || null); }catch(e){}
     }, 0);
   });
+})();
+
+
+
+/* v73: mobile overlay hard lock + separated start/game screens + remote move slide.
+   A board under the start menu is not "ambience". It is CSS losing a fight. */
+(function(){
+  try{ document.title = "윷놀이 v73"; }catch(e){}
+  window.YUTNORI_VERSION = "v73";
+
+  function v73InstallStyle(){
+    if(document.getElementById("v73HardFixStyle")) return;
+    const style = document.createElement("style");
+    style.id = "v73HardFixStyle";
+    style.textContent = `
+      #game.hidden,
+      #menu.hidden,
+      .screen.hidden,
+      body.mobile #game.hidden,
+      body.mobile #menu.hidden,
+      body.mobile .screen.hidden{
+        display:none !important;
+        visibility:hidden !important;
+        pointer-events:none !important;
+      }
+      body.mobile #menu:not(.hidden){
+        display:block !important;
+        visibility:visible !important;
+      }
+      body.mobile #game:not(.hidden){
+        visibility:visible !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+  v73InstallStyle();
+  window.addEventListener("DOMContentLoaded", v73InstallStyle);
+
+  function v73HideYutOverlays(){
+    try{ document.body.classList.remove("yutThrowing"); }catch(e){}
+    try{
+      const overlay = document.getElementById("pcYutOverlay");
+      if(overlay) overlay.classList.add("hidden");
+    }catch(e){}
+    try{
+      if(typeof renderYut === "function"){
+        clearTimeout(renderYut._mobileTimer);
+        clearTimeout(renderYut._pcTimer);
+        clearTimeout(renderYut._guardTimer);
+        clearTimeout(renderYut._overlayTimer);
+      }
+    }catch(e){}
+  }
+
+  function v73YutSig(yut){
+    if(!yut) return "";
+    try{
+      if(typeof yut === "string") return yut;
+      return JSON.stringify({
+        id:yut.eventId || yut.rollId || yut.t || null,
+        name:yut.name || null,
+        faces:Array.isArray(yut.faces) ? yut.faces : null,
+        baekdoIndex:typeof yut.baekdoIndex === "number" ? yut.baekdoIndex : null,
+        nak:!!yut.nak
+      });
+    }catch(e){
+      return String((yut && yut.name) || "");
+    }
+  }
+
+  function v73YutEventAgeMs(yut){
+    if(!yut || typeof yut !== "object") return Infinity;
+    const raw = yut.eventId || yut.rollId || yut.t || "";
+    if(typeof raw === "number") return Date.now() - raw;
+    const m = String(raw).match(/^(\d{10,})/);
+    if(!m) return Infinity;
+    return Date.now() - Number(m[1]);
+  }
+
+  function v73AllowResultOverlay(resultData){
+    if(!resultData) return false;
+    if(!MP) return false;
+    return Date.now() < (MP.v73AllowYutOverlayUntil || 0);
+  }
+
+  if(typeof renderYut === "function" && renderYut.__v73Patched !== true){
+    const oldRenderYutV73 = renderYut;
+    renderYut = function(resultData, isRolling){
+      const allowResult = isRolling || v73AllowResultOverlay(resultData);
+      const out = oldRenderYutV73.call(this, resultData, isRolling);
+      if(!allowResult){
+        v73HideYutOverlays();
+      }
+      return out;
+    };
+    renderYut.__v73Patched = true;
+  }
+
+  function v73Clone(obj){
+    try{ return JSON.parse(JSON.stringify(obj)); }catch(e){ return null; }
+  }
+
+  function v73SamePos(a, b){
+    return a === b || String(a) === String(b);
+  }
+
+  function v73FindMissingCard(beforeCards, afterCards){
+    const before = Array.isArray(beforeCards) ? beforeCards : [];
+    const after = Array.isArray(afterCards) ? afterCards : [];
+    const used = new Array(after.length).fill(false);
+    for(const bc of before){
+      let found = -1;
+      for(let i=0;i<after.length;i++){
+        if(used[i]) continue;
+        const ac = after[i];
+        if(ac && bc && ac.name === bc.name && ac.value === bc.value){ found = i; break; }
+      }
+      if(found >= 0){
+        used[found] = true;
+      }else{
+        return bc;
+      }
+    }
+    return null;
+  }
+
+  function v73DetectRemoteMove(beforeGame, nextGame){
+    if(!beforeGame || !nextGame || !Array.isArray(beforeGame.pieces) || !Array.isArray(nextGame.pieces)) return null;
+    if(Date.now() < ((MP && MP.v73LocalMoveUntil) || 0)) return null;
+
+    const oldById = new Map(beforeGame.pieces.map(p=>[p && p.id, p]));
+    const moverTeam = typeof beforeGame.turn === "number" ? beforeGame.turn : nextGame.turn;
+    const changed = [];
+
+    for(const np of nextGame.pieces){
+      if(!np || np.team !== moverTeam) continue;
+      const op = oldById.get(np.id);
+      if(!op) continue;
+      const oldFinished = !!op.finished || op.pos === "FINISH";
+      const newFinished = !!np.finished || np.pos === "FINISH";
+      if(oldFinished && newFinished) continue;
+      if(!v73SamePos(op.pos, np.pos) || oldFinished !== newFinished){
+        changed.push({id:np.id, from:op.pos, to:newFinished ? "FINISH" : np.pos});
+      }
+    }
+
+    if(!changed.length) return null;
+    const primary = changed.find(x=>x.to !== null && x.to !== undefined) || changed[0];
+    if(primary.to === null || primary.to === undefined) return null;
+
+    let steps = [];
+    const missingCard = v73FindMissingCard(beforeGame.cards, nextGame.cards);
+    try{
+      if(missingCard && typeof calcPathSteps === "function"){
+        steps = calcPathSteps(primary.from, missingCard.value, primary.to) || [];
+      }
+    }catch(e){ steps = []; }
+
+    if(!steps.length || !v73SamePos(steps[steps.length - 1], primary.to)){
+      steps = [primary.to];
+    }
+
+    return {
+      ids:changed.map(x=>x.id),
+      from:primary.from,
+      to:primary.to,
+      steps
+    };
+  }
+
+  function v73Coord(pos){
+    try{ return getNodeCoord(pos); }catch(e){ return {x:520, y:520}; }
+  }
+
+  function v73Ease(t){
+    try{ return easeInOut(t); }catch(e){ return t < .5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2; }
+  }
+
+  function v73AnimateIds(ids, fromCoord, toCoord, duration){
+    return new Promise(resolve=>{
+      const start = performance.now();
+      function frame(now){
+        const raw = Math.min(1, (now - start) / duration);
+        const t = v73Ease(raw);
+        const x = fromCoord.x + (toCoord.x - fromCoord.x) * t;
+        const y = fromCoord.y + (toCoord.y - fromCoord.y) * t;
+        if(game && Array.isArray(game.pieces)){
+          game.pieces.forEach(p=>{
+            if(p && ids.includes(p.id)){
+              p.animating = true;
+              p.animX = x;
+              p.animY = y;
+            }
+          });
+        }
+        try{ render(); }catch(e){}
+        if(raw < 1) requestAnimationFrame(frame);
+        else resolve();
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  async function v73PlayRemoteMove(anim){
+    if(!anim || !game || !Array.isArray(anim.ids) || !anim.ids.length) return;
+    if(MP) MP.v73RemoteAnimating = true;
+    try{
+      const ids = anim.ids.slice();
+      let current = v73Coord(anim.from);
+      if(game && Array.isArray(game.pieces)){
+        game.pieces.forEach(p=>{
+          if(p && ids.includes(p.id)){
+            p.animating = true;
+            p.animX = current.x;
+            p.animY = current.y;
+          }
+        });
+      }
+      try{ render(); }catch(e){}
+      const path = Array.isArray(anim.steps) && anim.steps.length ? anim.steps : [anim.to];
+      for(const step of path){
+        const next = v73Coord(step);
+        await v73AnimateIds(ids, current, next, 170);
+        current = next;
+      }
+    }finally{
+      if(game && Array.isArray(game.pieces)){
+        game.pieces.forEach(p=>{
+          if(p && anim.ids.includes(p.id)){
+            p.animating = false;
+            delete p.animX;
+            delete p.animY;
+          }
+        });
+      }
+      if(MP) MP.v73RemoteAnimating = false;
+      try{ render(); }catch(e){}
+    }
+  }
+
+  if(typeof mpScheduleSend === "function" && mpScheduleSend.__v73Patched !== true){
+    const oldMpScheduleSendV73 = mpScheduleSend;
+    mpScheduleSend = function(){
+      if(MP && MP.v73RemoteAnimating) return;
+      return oldMpScheduleSendV73.apply(this, arguments);
+    };
+    mpScheduleSend.__v73Patched = true;
+  }
+
+  if(typeof mpSendNow === "function" && mpSendNow.__v73Patched !== true){
+    const oldMpSendNowV73 = mpSendNow;
+    mpSendNow = function(){
+      if(MP && MP.v73RemoteAnimating) return;
+      return oldMpSendNowV73.apply(this, arguments);
+    };
+    mpSendNow.__v73Patched = true;
+  }
+
+  if(typeof roll === "function" && roll.__v73Patched !== true){
+    const oldRollV73 = roll;
+    roll = function(){
+      if(MP) MP.v73AllowYutOverlayUntil = Date.now() + 2400;
+      return oldRollV73.apply(this, arguments);
+    };
+    roll.__v73Patched = true;
+  }
+
+  if(typeof moveSelected === "function" && moveSelected.__v73Patched !== true){
+    const oldMoveSelectedV73 = moveSelected;
+    moveSelected = async function(){
+      if(MP) MP.v73LocalMoveUntil = Date.now() + 2600;
+      return oldMoveSelectedV73.apply(this, arguments);
+    };
+    moveSelected.__v73Patched = true;
+  }
+
+  if(typeof moveByHint === "function" && moveByHint.__v73Patched !== true){
+    const oldMoveByHintV73 = moveByHint;
+    moveByHint = function(){
+      if(MP) MP.v73LocalMoveUntil = Date.now() + 2600;
+      return oldMoveByHintV73.apply(this, arguments);
+    };
+    moveByHint.__v73Patched = true;
+  }
+
+  if(typeof selectPiece === "function" && selectPiece.__v73Patched !== true){
+    const oldSelectPieceV73 = selectPiece;
+    selectPiece = function(){
+      if(MP) MP.v73AllowYutOverlayUntil = 0;
+      const out = oldSelectPieceV73.apply(this, arguments);
+      setTimeout(v73HideYutOverlays, 0);
+      return out;
+    };
+    selectPiece.__v73Patched = true;
+  }
+
+  if(typeof selectCard === "function" && selectCard.__v73Patched !== true){
+    const oldSelectCardV73 = selectCard;
+    selectCard = function(){
+      if(MP) MP.v73AllowYutOverlayUntil = 0;
+      const out = oldSelectCardV73.apply(this, arguments);
+      setTimeout(v73HideYutOverlays, 0);
+      return out;
+    };
+    selectCard.__v73Patched = true;
+  }
+
+  if(typeof mpApplyPayload === "function" && mpApplyPayload.__v73Patched !== true){
+    const oldMpApplyPayloadV73 = mpApplyPayload;
+    mpApplyPayload = function(payload){
+      const beforeGame = v73Clone(game);
+      const beforeYutSig = v73YutSig(MP && MP.lastYut);
+      const incomingYutSig = v73YutSig(payload && payload.lastYut);
+      const newFreshRoll = !!incomingYutSig && incomingYutSig !== beforeYutSig && v73YutEventAgeMs(payload && payload.lastYut) < 6500;
+      const remoteMove = v73DetectRemoteMove(beforeGame, payload && payload.game);
+
+      if(MP){
+        MP.v73AllowYutOverlayUntil = newFreshRoll ? Date.now() + 1700 : 0;
+      }
+
+      const out = oldMpApplyPayloadV73.call(this, payload);
+
+      if(!newFreshRoll){
+        setTimeout(v73HideYutOverlays, 0);
+      }
+      if(remoteMove && !newFreshRoll){
+        setTimeout(()=>v73PlayRemoteMove(remoteMove), 0);
+      }
+      return out;
+    };
+    mpApplyPayload.__v73Patched = true;
+  }
+
+  function v73ScreenGuard(){
+    v73InstallStyle();
+    const menu = document.getElementById("menu");
+    const gameEl = document.getElementById("game");
+    if(menu && gameEl && !menu.classList.contains("hidden")){
+      gameEl.classList.add("hidden");
+    }
+  }
+  window.addEventListener("DOMContentLoaded", ()=>setTimeout(v73ScreenGuard, 0));
 })();
 
 </script>
