@@ -3124,6 +3124,93 @@ body.mobile .mpChatInput{font-size:16px !important;}
 .mpPlayers{font-size:12px;line-height:1.35;color:#6b584a;margin-top:6px;}
 body.mobile .mpBox{overflow:visible !important;}
 
+
+
+/* v71: multiplayer seat intro + kept-card sync guard */
+.seatIntroOverlay{
+  position:absolute;
+  left:50%;
+  top:46%;
+  transform:translate(-50%,-50%) scale(.94);
+  min-width:420px;
+  max-width:680px;
+  padding:22px 26px;
+  border-radius:28px;
+  background:rgba(34,24,17,.95);
+  color:#fff4d8;
+  z-index:74;
+  pointer-events:none;
+  box-shadow:0 18px 42px rgba(0,0,0,.38), inset 0 2px 0 rgba(255,255,255,.14);
+  opacity:0;
+  display:none;
+}
+.seatIntroOverlay.show{
+  display:block;
+  animation:seatIntroPop 1.5s ease forwards;
+}
+.seatIntroTitle{
+  font-size:34px;
+  font-weight:1000;
+  text-align:center;
+  margin-bottom:12px;
+}
+.seatIntroList{
+  display:grid;
+  gap:8px;
+}
+.seatIntroRow{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:8px 12px;
+  border-radius:16px;
+  background:rgba(255,244,216,.08);
+  font-size:19px;
+  font-weight:900;
+}
+.seatIntroRow.me{
+  background:rgba(255,244,216,.18);
+  font-size:25px;
+  outline:3px solid rgba(255,244,216,.72);
+}
+.seatIntroDot{
+  width:22px;
+  height:22px;
+  border-radius:50%;
+  border:3px solid #1b1410;
+  flex:0 0 auto;
+}
+.seatIntroRow.me .seatIntroDot{
+  width:42px;
+  height:42px;
+  border-width:5px;
+  box-shadow:0 0 0 5px rgba(255,244,216,.24), 0 0 18px rgba(255,244,216,.34);
+}
+.seatIntroBadge{
+  margin-left:auto;
+  font-size:14px;
+  padding:4px 9px;
+  border-radius:999px;
+  background:#fff4d8;
+  color:#241811;
+}
+@keyframes seatIntroPop{
+  0%{opacity:0; transform:translate(-50%,-50%) scale(.82)}
+  12%{opacity:1; transform:translate(-50%,-50%) scale(1.04)}
+  82%{opacity:1; transform:translate(-50%,-50%) scale(1)}
+  100%{opacity:0; transform:translate(-50%,-50%) scale(.96)}
+}
+body.mobile .seatIntroOverlay{
+  min-width:0;
+  width:calc(100vw - 32px);
+  max-width:none;
+  top:42%;
+  padding:18px;
+}
+body.mobile .seatIntroTitle{font-size:28px}
+body.mobile .seatIntroRow{font-size:17px}
+body.mobile .seatIntroRow.me{font-size:22px}
+
 </style>
 </head>
 <body>
@@ -3306,6 +3393,7 @@ body.mobile .mpBox{overflow:visible !important;}
   <div class="boardPanel">
     <div id="centerTurnBanner" class="centerTurnBanner"></div>
   <div id="eventToast" class="eventToast"></div>
+  <div id="seatIntroOverlay" class="seatIntroOverlay"></div>
   <div class="deviceBadge"></div>
     <div id="boardCardStack" class="boardCardStack" aria-label="보유 카드"></div>
     <div id="pcYutOverlay" class="pcYutOverlay hidden">
@@ -7074,6 +7162,241 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
 
   window.addEventListener("DOMContentLoaded", ()=>setTimeout(v70BindLobby, 0));
   setTimeout(v70BindLobby, 0);
+})();
+
+
+/* v71: kept card persistence + start seat intro
+   The old roll button had fossilized listeners from older versions. Very educational, in the way a tire fire is educational. */
+(function(){
+  try{ document.title = "윷놀이 v71"; }catch(e){}
+  window.YUTNORI_VERSION = "v71";
+
+  function v71CardNameList(cards){
+    return (Array.isArray(cards) ? cards : []).map(c=>`${c && c.name}:${c && c.value}`).join("|");
+  }
+
+  function v71RememberCards(){
+    if(!MP || !game || !Array.isArray(game.cards) || game.cards.length === 0) return;
+    MP.v71CardProtect = {
+      turn: game.turn,
+      count: game.cards.length,
+      sig: v71CardNameList(game.cards),
+      until: Date.now() + 2600
+    };
+  }
+
+  function v71ClearCardProtect(){
+    if(MP) MP.v71CardProtect = null;
+  }
+
+  function v71IncomingWouldEraseKeptCard(payload){
+    const guard = MP && MP.v71CardProtect;
+    if(!guard || Date.now() > guard.until || !game || !payload || !payload.game) return false;
+    if(payload.game.turn !== guard.turn) return false;
+
+    const localCards = Array.isArray(game.cards) ? game.cards : [];
+    const incomingCards = Array.isArray(payload.game.cards) ? payload.game.cards : [];
+
+    if(localCards.length < guard.count) return false;
+    if(v71CardNameList(localCards) !== guard.sig) return false;
+    return incomingCards.length < guard.count;
+  }
+
+  function v71ForceSyncBurst(){
+    if(!MP || !MP.connected || !game) return;
+    const send = ()=>{
+      if(!MP.connected || !MP.ws || MP.ws.readyState !== WebSocket.OPEN || MP.applying || !game || rolling) return;
+      try{
+        MP.lastSent = "";
+        mpSendNow();
+      }catch(e){
+        try{ mpSetStatus("멀티 전송 재시도 실패"); }catch(_){}
+      }
+    };
+    setTimeout(send, 20);
+    setTimeout(send, 260);
+    setTimeout(send, 620);
+  }
+
+  if(typeof mpApplyPayload === "function"){
+    const oldApplyPayloadV71 = mpApplyPayload;
+    mpApplyPayload = function(payload){
+      if(v71IncomingWouldEraseKeptCard(payload)){
+        try{ mpSetStatus(mpStatusText("킵카드 보호 중")); }catch(e){}
+        v71ForceSyncBurst();
+        return;
+      }
+      const beforeSeat = MP ? MP.seat : null;
+      const out = oldApplyPayloadV71(payload);
+      if(MP && game && MP.started && typeof MP.seat === "number" && MP.seat >= 0){
+        v71ShowSeatIntro(beforeSeat !== MP.seat);
+      }
+      return out;
+    };
+  }
+
+  const oldMoveSelectedV71 = moveSelected;
+  moveSelected = async function(forcedDest){
+    v71ClearCardProtect();
+    return oldMoveSelectedV71.call(this, forcedDest);
+  };
+
+  const oldNextTurnV71 = nextTurn;
+  nextTurn = function(){
+    v71ClearCardProtect();
+    return oldNextTurnV71.call(this);
+  };
+
+  function v71PlayerNameForSeat(seat){
+    const p = MP && Array.isArray(MP.players) ? MP.players.find(x=>x && x.seat === seat) : null;
+    return p && p.name ? p.name : `${seat + 1}P`;
+  }
+
+  function v71ShowSeatIntro(force=false){
+    if(!game || !MP || !MP.connected || !MP.started || typeof MP.seat !== "number" || MP.seat < 0) return;
+    const el = document.getElementById("seatIntroOverlay");
+    if(!el) return;
+
+    const key = `${MP.room || ""}|${MP.seat}|${(game.teams || []).map(t=>t.name).join(",")}`;
+    if(!force && MP.v71SeatIntroKey === key) return;
+    MP.v71SeatIntroKey = key;
+
+    const myTeam = game.teams[MP.seat] || {name:`${MP.seat + 1}P`, color:"#fff4d8"};
+    const rows = (game.teams || []).map((t, i)=>{
+      const me = i === MP.seat;
+      const name = v71PlayerNameForSeat(i);
+      const safeTeam = escapeHtml(t.name || `${i + 1}P`);
+      const safeName = escapeHtml(name);
+      const color = t.color || "#fff4d8";
+      return `<div class="seatIntroRow${me ? " me" : ""}"><span class="seatIntroDot" style="background:${color}"></span><span>${safeTeam} · ${safeName}</span>${me ? `<span class="seatIntroBadge">내 색상</span>` : ""}</div>`;
+    }).join("");
+
+    el.innerHTML = `<div class="seatIntroTitle">당신은 ${escapeHtml(myTeam.name || `${MP.seat + 1}P`)}</div><div class="seatIntroList">${rows}</div>`;
+    el.classList.remove("show");
+    void el.offsetWidth;
+    el.classList.add("show");
+    clearTimeout(v71ShowSeatIntro._timer);
+    v71ShowSeatIntro._timer = setTimeout(()=>el.classList.remove("show"), 1500);
+  }
+
+  function v71RollCore(){
+    if(typeof mpCanControlCurrentTurn === "function" && !mpCanControlCurrentTurn(true)) return;
+    if(!game || game.over || rolling || game.rollCharges <= 0 || isTeamRanked(game.turn)) return;
+
+    addLog("윷 던지기 버튼 클릭");
+    sfx("roll");
+    rolling = true;
+    game.rollCharges--;
+    render();
+    renderYut(null, true);
+
+    setTimeout(()=>{
+      let keptCard = false;
+      try{
+        const throwResult = throwYutResult();
+        const name = throwResult.name;
+        const info = RESULT_INFO[name];
+        MP.lastYut = throwResult;
+        renderYut(throwResult, false);
+        addLog(`${teamName(game.turn)}: ${name}`);
+        sfx("card");
+
+        if(info.value !== null){
+          if(name === "백도" && !hasMovableOwnPieceForBackdo()){
+            addLog("판 위에 움직일 자기 말이 없어 백도 카드 소멸");
+          }else{
+            game.cards.push({name, value:info.value});
+            keptCard = true;
+          }
+        }
+
+        if(name === "윷" || name === "모"){
+          game.rollCharges++;
+          showBonus(`${name}: 한 번 더 던지기 가능`);
+          sfx("bonus");
+          addLog(`${name}으로 던지기 1회 충전`);
+        }
+      }catch(err){
+        console.error(err);
+        addLog(`윷 결과 처리 오류: ${err.message}`);
+        showEventToast("윷 결과 오류");
+      }finally{
+        rolling = false;
+        if(keptCard) v71RememberCards();
+        render();
+        maybeAutoEnd();
+        if(keptCard) v71ForceSyncBurst();
+        else v71ForceSyncBurst();
+        if(isCurrentTurnAuto()) setTimeout(runAutoLoop, autoDelay(300));
+      }
+    }, 700);
+  }
+
+  roll = v71RollCore;
+
+  function v71RebindRollButtons(){
+    const rollBtn = document.getElementById("rollBtn");
+    if(rollBtn && rollBtn.dataset.v71Rebound !== "1"){
+      const fresh = rollBtn.cloneNode(true);
+      fresh.dataset.v71Rebound = "1";
+      rollBtn.parentNode.replaceChild(fresh, rollBtn);
+      fresh.addEventListener("click", e=>{
+        e.preventDefault();
+        roll();
+      });
+    }
+
+    document.querySelectorAll(".mobileRollCircle").forEach(btn=>{
+      if(btn.dataset.v71Rebound === "1") return;
+      const fresh = btn.cloneNode(true);
+      fresh.dataset.v71Rebound = "1";
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener("click", e=>{
+        e.preventDefault();
+        rollFromMobile();
+      });
+    });
+  }
+
+  const oldRollFromMobileV71 = rollFromMobile;
+  rollFromMobile = function(){
+    if(!game || rolling || game.over || game.rollCharges <= 0 || isTeamRanked(game.turn)) return;
+    return roll();
+  };
+
+  const oldStartGameV71 = startGame;
+  startGame = function(){
+    const out = oldStartGameV71.call(this);
+    setTimeout(v71RebindRollButtons, 0);
+    setTimeout(()=>v71ShowSeatIntro(true), 450);
+    setTimeout(()=>v71ShowSeatIntro(false), 1100);
+    return out;
+  };
+
+  const oldContinueSavedGameV71 = continueSavedGame;
+  continueSavedGame = function(){
+    const out = oldContinueSavedGameV71.call(this);
+    setTimeout(v71RebindRollButtons, 0);
+    return out;
+  };
+
+  if(typeof v70BindLobby === "function"){
+    const oldV70BindLobbyV71 = v70BindLobby;
+    v70BindLobby = function(){
+      const out = oldV70BindLobbyV71.call(this);
+      setTimeout(v71RebindRollButtons, 0);
+      return out;
+    };
+  }
+
+  window.addEventListener("DOMContentLoaded", ()=>{
+    setTimeout(v71RebindRollButtons, 0);
+    setTimeout(()=>v71ShowSeatIntro(false), 1000);
+  });
+  setInterval(()=>{
+    v71RebindRollButtons();
+    v71ShowSeatIntro(false);
+  }, 1400);
 })();
 
 </script>
