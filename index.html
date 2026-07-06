@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>윷놀이 v68</title>
+<title>윷놀이 v69</title>
 <style>
 *{box-sizing:border-box}
 body{
@@ -3119,8 +3119,8 @@ body.mobile .mpChatInput{font-size:16px !important;}
 
 
 
-/* v68: clearer multiplayer lobby/status */
-.mpStatus.v68Warn{border-color:#a34a18;background:#fff1d8;color:#4a2612;}
+/* v69: clearer multiplayer lobby/status */
+.mpStatus.v69Warn{border-color:#a34a18;background:#fff1d8;color:#4a2612;}
 .mpPlayers{font-size:12px;line-height:1.35;color:#6b584a;margin-top:6px;}
 body.mobile .mpBox{overflow:visible !important;}
 
@@ -3151,7 +3151,7 @@ body.mobile .mpBox{overflow:visible !important;}
 
 
     <div class="mpBox">
-      <h2>친구랑 같이 하기 v68</h2>
+      <h2>친구랑 같이 하기 v69</h2>
       <div class="small">GitHub Pages는 화면, Worker는 실시간 멀티/채팅을 맡는다. 게임 시작 시 접속자 순서를 랜덤 배정한다.</div>
       <input id="mpServerUrl" class="mpInput" placeholder="Cloudflare Worker 주소 예: https://yutnori-multi.아이디.workers.dev">
       <div class="row">
@@ -6478,18 +6478,18 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
 
 
 
-/* v68: authoritative multiplayer repair
+/* v69: authoritative multiplayer repair
    - The server is authoritative.
    - Seats are not assigned when joining. The host starts the game, then the Worker randomizes connected players into turn seats.
    - Chat and state use the same WebSocket but separate message types.
    - Typing in chat never triggers game hotkeys.
 */
 (function(){
-  try{ document.title = "윷놀이 v68"; }catch(e){}
-  window.YUTNORI_VERSION = "v68";
+  try{ document.title = "윷놀이 v69"; }catch(e){}
+  window.YUTNORI_VERSION = "v69";
 
   if(typeof MP === "object"){
-    MP.version = "v68";
+    MP.version = "v69";
     MP.host = false;
     MP.started = false;
     MP.seat = null;
@@ -6498,9 +6498,9 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     MP.createIntent = false;
   }
 
-  function v68StorageGet(k){ try{return localStorage.getItem(k)||"";}catch(e){return "";} }
-  function v68StorageSet(k,v){ try{localStorage.setItem(k,v);}catch(e){} }
-  function v68PlayersLine(){
+  function v69StorageGet(k){ try{return localStorage.getItem(k)||"";}catch(e){return "";} }
+  function v69StorageSet(k,v){ try{localStorage.setItem(k,v);}catch(e){} }
+  function v69PlayersLine(){
     const el = mpEl("mpPlayers");
     if(!el) return;
     if(!MP.connected){ el.textContent = ""; return; }
@@ -6513,8 +6513,8 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
   }
 
   mpInitFields = function(){
-    const saved = v68StorageGet("yutnoriMpServerV68") || v68StorageGet("yutnoriMpServerV62") || "";
-    const name = v68StorageGet("yutnoriMpNameV68") || v68StorageGet("yutnoriMpNameV62") || "";
+    const saved = v69StorageGet("yutnoriMpServerV69") || v69StorageGet("yutnoriMpServerV62") || "";
+    const name = v69StorageGet("yutnoriMpNameV69") || v69StorageGet("yutnoriMpNameV62") || "";
     if(mpEl("mpServerUrl")) mpEl("mpServerUrl").value = saved;
     if(mpEl("mpName")) mpEl("mpName").value = name;
     const params = new URLSearchParams(location.search);
@@ -6544,24 +6544,24 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
 
   mpSetStatus = function(text){
     const el = mpEl("mpStatus");
-    if(el){ el.textContent = text; el.classList.toggle("v68Warn", /거절|오류|끊김|비어|확인|불가/.test(text)); }
-    v68PlayersLine();
+    if(el){ el.textContent = text; el.classList.toggle("v69Warn", /거절|오류|끊김|비어|확인|불가/.test(text)); }
+    v69PlayersLine();
   };
 
   mpConnectionPayload = function(){
-    return { version:"v68", game, lastYut:MP.lastYut, sentAt:Date.now() };
+    return { version:"v69", game, lastYut:MP.lastYut, sentAt:Date.now() };
   };
 
   mpSendNow = function(){
     if(!MP.connected || !MP.ws || MP.ws.readyState !== WebSocket.OPEN || MP.applying || !game) return;
     const payload = mpConnectionPayload();
-    const text = JSON.stringify({type:"state", room:MP.room, name:MP.name, clientId:MP.clientId, version:"v68", payload});
+    const text = JSON.stringify({type:"state", room:MP.room, name:MP.name, clientId:MP.clientId, version:"v69", payload});
     if(text === MP.lastSent) return;
     MP.lastSent = text;
     try{ MP.ws.send(text); }catch(e){ mpSetStatus("멀티 전송 실패. Worker 연결 확인"); }
   };
 
-  function v68ApplyLobby(msg, room){
+  function v69ApplyLobby(msg, room){
     MP.host = !!msg.host;
     MP.started = !!msg.started;
     MP.seat = (typeof msg.seat === "number") ? msg.seat : null;
@@ -6571,10 +6571,10 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     render && render();
   }
 
-  function v68HandleMessage(msg, room){
+  function v69HandleMessage(msg, room){
     if(!msg || !msg.type) return;
     if(msg.type === "hello" || msg.type === "seat" || msg.type === "presence" || msg.type === "lobby"){
-      v68ApplyLobby(msg, room);
+      v69ApplyLobby(msg, room);
       return;
     }
     if(msg.type === "snapshot" && msg.payload){
@@ -6627,8 +6627,8 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     if(!serverUrl){ mpSetStatus("Worker 주소부터 넣어야 함"); return; }
     if(!room){ mpSetStatus("방 코드가 비어 있음"); return; }
 
-    v68StorageSet("yutnoriMpServerV68", serverUrl);
-    v68StorageSet("yutnoriMpNameV68", name);
+    v69StorageSet("yutnoriMpServerV69", serverUrl);
+    v69StorageSet("yutnoriMpNameV69", name);
     if(MP.ws) try{ MP.ws.close(); }catch(e){}
 
     MP.room = room;
@@ -6653,12 +6653,12 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
       const badge = mpEl("mpRoomBadge");
       if(badge) badge.textContent = `MULTI ${room}`;
       mpSetStatus(`${room} 방 연결됨 · 게임 시작 시 순서 랜덤 배정`);
-      ws.send(JSON.stringify({type:"hello", room, name, clientId:MP.clientId, create:!!create, version:"v68"}));
+      ws.send(JSON.stringify({type:"hello", room, name, clientId:MP.clientId, create:!!create, version:"v69"}));
     };
     ws.onmessage = (ev)=>{
       let msg;
       try{ msg = JSON.parse(ev.data); }catch(e){ return; }
-      v68HandleMessage(msg, room);
+      v69HandleMessage(msg, room);
       mpChatRender && mpChatRender();
     };
     ws.onclose = ()=>{
@@ -6667,7 +6667,7 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
       mpSetStatus("멀티 연결 끊김. Worker 배포/주소 확인");
     };
     ws.onerror = ()=>{
-      mpSetStatus("멀티 연결 오류. Worker 주소나 v68 Worker 배포 확인");
+      mpSetStatus("멀티 연결 오류. Worker 주소나 v69 Worker 배포 확인");
     };
   };
 
@@ -6714,19 +6714,19 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
       const seat = (typeof MP.seat === "number" && MP.seat >= 0) ? mpSeatName(MP.seat) : (MP.started ? "관전" : "순서 미정");
       badge.textContent = `MULTI ${MP.room} · ${seat}`;
     }
-    v68PlayersLine();
+    v69PlayersLine();
   };
 
   mpCopyInvite = function(){
     const serverUrl = mpNormalizeServerUrl(mpEl("mpServerUrl")?.value || MP.serverUrl);
     const room = (mpEl("mpRoomCode")?.value || MP.room || "").trim().toUpperCase();
     const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(room)}`;
-    v68StorageSet("yutnoriMpServerV68", serverUrl);
+    v69StorageSet("yutnoriMpServerV69", serverUrl);
     navigator.clipboard?.writeText(`게임 링크: ${url}\n방 코드: ${room}\nWorker 주소: ${serverUrl}`);
     mpSetStatus(`초대 정보 복사됨 · 방 ${room}`);
   };
 
-  function v68RebindMultiplayerButtons(){
+  function v69RebindMultiplayerButtons(){
     mpInitFields();
     const createOld = mpEl("mpCreateBtn");
     const joinOld = mpEl("mpJoinBtn");
@@ -6764,23 +6764,23 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     }
   }, true);
 
-  window.addEventListener("DOMContentLoaded", ()=>setTimeout(v68RebindMultiplayerButtons, 0));
+  window.addEventListener("DOMContentLoaded", ()=>setTimeout(v69RebindMultiplayerButtons, 0));
 })();
 
 
-/* v68: start-first random order hard fix
+/* v69: start-first random order hard fix
    Lobby order must stay "순서 미정" until the host presses game start.
    The start button must be usable by the host even before any seat exists.
    Shockingly, a game should be startable before its turn order exists. Civilization advances. */
 (function(){
-  try{ document.title = "윷놀이 v68"; }catch(e){}
-  window.YUTNORI_VERSION = "v68";
+  try{ document.title = "윷놀이 v69"; }catch(e){}
+  window.YUTNORI_VERSION = "v69";
 
-  function v68IsHostReady(){
+  function v69IsHostReady(){
     return !!(window.MP && MP.connected && MP.host && !MP.started && !game);
   }
 
-  function v68SyncStartButton(){
+  function v69SyncStartButton(){
     const startBtn = document.getElementById("startBtn");
     if(!startBtn) return;
     if(!MP || !MP.connected){
@@ -6805,20 +6805,20 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     }
   }
 
-  const oldMpSetStatusV68 = mpSetStatus;
+  const oldMpSetStatusV69 = mpSetStatus;
   mpSetStatus = function(text){
-    oldMpSetStatusV68(text);
-    v68SyncStartButton();
+    oldMpSetStatusV69(text);
+    v69SyncStartButton();
   };
 
-  const oldMpStatusTextV68 = mpStatusText;
+  const oldMpStatusTextV69 = mpStatusText;
   mpStatusText = function(prefix){
     if(MP && MP.connected && !MP.started && !game){
       const role = MP.host ? "방장" : "참가자";
       const tail = MP.host ? " · 게임 시작 버튼을 누르면 순서 랜덤 배정" : " · 방장이 시작하면 순서 랜덤 배정";
       return `${prefix || "멀티 연결됨"} · ${role} · 순서 미정${tail}`;
     }
-    return oldMpStatusTextV68(prefix);
+    return oldMpStatusTextV69(prefix);
   };
 
   mpCanStartGame = function(show=false){
@@ -6853,26 +6853,26 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     return true;
   };
 
-  const oldMpApplyControlLockUiV68 = mpApplyControlLockUi;
+  const oldMpApplyControlLockUiV69 = mpApplyControlLockUi;
   mpApplyControlLockUi = function(){
-    if(!MP || !MP.connected){ v68SyncStartButton(); return; }
+    if(!MP || !MP.connected){ v69SyncStartButton(); return; }
     if(!game){
-      v68SyncStartButton();
+      v69SyncStartButton();
       const badge = mpEl("mpRoomBadge");
       if(badge && MP.room) badge.textContent = `MULTI ${MP.room} · 순서 미정`;
-      if(typeof v68PlayersLine === "function") v68PlayersLine();
+      if(typeof v69PlayersLine === "function") v69PlayersLine();
       return;
     }
-    oldMpApplyControlLockUiV68();
-    v68SyncStartButton();
+    oldMpApplyControlLockUiV69();
+    v69SyncStartButton();
   };
 
   // Disabled buttons do not reliably fire click events, so keep it enabled for the host aggressively.
-  const oldHandleV68Message = (typeof v68HandleMessage === "function") ? v68HandleMessage : null;
-  if(oldHandleV68Message){
-    v68HandleMessage = function(msg, room){
-      const r = oldHandleV68Message(msg, room);
-      v68SyncStartButton();
+  const oldHandleV69Message = (typeof v69HandleMessage === "function") ? v69HandleMessage : null;
+  if(oldHandleV69Message){
+    v69HandleMessage = function(msg, room){
+      const r = oldHandleV69Message(msg, room);
+      v69SyncStartButton();
       return r;
     };
   }
@@ -6893,14 +6893,14 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
   }, true);
 
   // When the host starts locally, push the very first state immediately. Do not wait for turn seats.
-  const oldStartGameV68 = startGame;
+  const oldStartGameV69 = startGame;
   startGame = function(){
     if(MP && MP.connected && !MP.started && !MP.host){
       if(typeof showEventToast === "function") showEventToast("방장이 시작해야 함");
       mpSetStatus(mpStatusText("대기 중"));
       return;
     }
-    oldStartGameV68();
+    oldStartGameV69();
     if(MP && MP.connected && MP.host && MP.ws && MP.ws.readyState === WebSocket.OPEN){
       MP.lastSent = "";
       setTimeout(()=>{ try{ mpSendNow(); }catch(e){} }, 0);
@@ -6910,31 +6910,31 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
   };
 
   // Rebind start button to the patched startGame, because the original listener captured the old function.
-  function v68RebindStart(){
+  function v69RebindStart(){
     const old = document.getElementById("startBtn");
-    if(!old || old.dataset.v68Rebound === "1") { v68SyncStartButton(); return; }
+    if(!old || old.dataset.v69Rebound === "1") { v69SyncStartButton(); return; }
     const fresh = old.cloneNode(true);
-    fresh.dataset.v68Rebound = "1";
+    fresh.dataset.v69Rebound = "1";
     old.parentNode.replaceChild(fresh, old);
     fresh.addEventListener("click", startGame);
-    v68SyncStartButton();
+    v69SyncStartButton();
   }
 
-  const oldConnectV68 = mpConnect;
+  const oldConnectV69 = mpConnect;
   mpConnect = function(room, create){
-    const r = oldConnectV68(room, create);
-    setTimeout(v68RebindStart, 0);
-    setTimeout(v68SyncStartButton, 300);
-    setTimeout(v68SyncStartButton, 1000);
+    const r = oldConnectV69(room, create);
+    setTimeout(v69RebindStart, 0);
+    setTimeout(v69SyncStartButton, 300);
+    setTimeout(v69SyncStartButton, 1000);
     return r;
   };
 
   window.addEventListener("DOMContentLoaded", ()=>{
-    setTimeout(v68RebindStart, 0);
-    setTimeout(v68SyncStartButton, 250);
-    setTimeout(v68SyncStartButton, 1000);
+    setTimeout(v69RebindStart, 0);
+    setTimeout(v69SyncStartButton, 250);
+    setTimeout(v69SyncStartButton, 1000);
   });
-  setInterval(v68SyncStartButton, 1200);
+  setInterval(v69SyncStartButton, 1200);
 })();
 
 </script>
