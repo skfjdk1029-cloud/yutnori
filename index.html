@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="ko">
 <head>
@@ -8484,6 +8483,304 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     };
     mpApplyPayload.__v75Patched = true;
   }
+})();
+
+
+
+/* v76: remote yut overlay sequence + roll spam guard.
+   A toast saying "개 나왔어" is not a throw animation. Astounding discovery, apparently. */
+(function(){
+  try{ document.title = "윷놀이 v76"; }catch(e){}
+  window.YUTNORI_VERSION = "v76";
+
+  function v76InstallLabel(){
+    try{
+      document.querySelectorAll("h2").forEach(h=>{
+        if(/친구랑 같이 하기 v\d+/i.test(h.textContent || "")) h.textContent = "친구랑 같이 하기 v76";
+      });
+    }catch(e){}
+  }
+  v76InstallLabel();
+  window.addEventListener("DOMContentLoaded", v76InstallLabel);
+
+  function v76YutSig(yut){
+    if(!yut) return "";
+    try{
+      if(typeof yut === "string") return yut;
+      return JSON.stringify({
+        id:yut.eventId || yut.rollId || yut.t || null,
+        name:yut.name || null,
+        faces:Array.isArray(yut.faces) ? yut.faces : null,
+        baekdoIndex:typeof yut.baekdoIndex === "number" ? yut.baekdoIndex : null,
+        nak:!!yut.nak
+      });
+    }catch(e){
+      return String((yut && yut.name) || "");
+    }
+  }
+
+  function v76YutAgeMs(yut){
+    if(!yut || typeof yut !== "object") return Infinity;
+    const raw = yut.eventId || yut.rollId || yut.t || "";
+    if(typeof raw === "number") return Date.now() - raw;
+    const m = String(raw).match(/^(\d{10,})/);
+    if(!m) return Infinity;
+    return Date.now() - Number(m[1]);
+  }
+
+  function v76SafeText(s){
+    return String(s == null ? "" : s).trim();
+  }
+
+  function v76DisplayName(seat){
+    try{
+      const n = Number(seat);
+      if(MP && Array.isArray(MP.players)){
+        const p = MP.players.find(x=>x && typeof x.seat === "number" && x.seat === n);
+        const nick = v76SafeText(p && p.name);
+        if(nick) return nick;
+      }
+      if(game && game.teams && game.teams[n] && v76SafeText(game.teams[n].name)) return v76SafeText(game.teams[n].name);
+      return `${n + 1}P`;
+    }catch(e){
+      return `${Number(seat) + 1}P`;
+    }
+  }
+
+  function v76MovedByThisClient(team){
+    return !!(MP && MP.connected && typeof MP.seat === "number" && MP.seat === team && Date.now() < (MP.v76LocalRollUntil || MP.v75LocalActionUntil || 0));
+  }
+
+  function v76ClearYutTimers(){
+    try{
+      clearTimeout(renderYut._mobileTimer);
+      clearTimeout(renderYut._pcTimer);
+      clearTimeout(renderYut._guardTimer);
+      clearTimeout(renderYut._overlayTimer);
+    }catch(e){}
+    clearTimeout(v76ShowRemoteYutSequence._phaseTimer);
+    clearTimeout(v76ShowRemoteYutSequence._hideTimer);
+  }
+
+  function v76RenderSticks(stage, display, isRolling){
+    if(!stage) return;
+    stage.innerHTML = "";
+    for(let i=0;i<4;i++){
+      stage.appendChild(makeYutStick(display.faces[i], isRolling, i === display.baekdoIndex, i === display.markedIndex));
+    }
+  }
+
+  function v76RenderYutVisual(resultData, isRolling, who){
+    const display = normalizeYutDisplay(resultData);
+    const stage = document.getElementById("yutStage");
+    const result = document.getElementById("yutResult");
+    const mobile = document.body.classList.contains("mobile");
+    const desktop = document.body.classList.contains("desktop");
+    const overlay = document.getElementById("pcYutOverlay");
+    const pcStage = document.getElementById("pcYutOverlayStage");
+    const pcResult = document.getElementById("pcYutOverlayResult");
+
+    v76RenderSticks(stage, display, isRolling);
+    if(result){
+      if(isRolling) result.textContent = who ? `${who} 던지는 중...` : "던지는 중...";
+      else result.textContent = display.name ? (who ? `${who} 결과: ${display.name}` : `결과: ${display.name}`) : `윷 던질 준비 · 백도윷 ${display.markedIndex + 1}번`;
+    }
+
+    if(mobile && (isRolling || display.name)) document.body.classList.add("yutThrowing");
+    else document.body.classList.remove("yutThrowing");
+
+    const showPc = desktop && uiSettings && uiSettings.pcYutOverlay && (isRolling || display.name);
+    if(showPc && overlay && pcStage && pcResult){
+      overlay.classList.remove("hidden");
+      v76RenderSticks(pcStage, display, isRolling);
+      if(isRolling) pcResult.textContent = who ? `${who} 던지는 중...` : "던지는 중...";
+      else pcResult.textContent = display.name ? (who ? `${who} 결과: ${display.name}` : `결과: ${display.name}`) : "윷 던질 준비";
+    }else if(overlay){
+      overlay.classList.add("hidden");
+    }
+  }
+
+  function v76HideRemoteYutOverlay(){
+    try{ document.body.classList.remove("yutThrowing"); }catch(e){}
+    try{ document.getElementById("pcYutOverlay")?.classList.add("hidden"); }catch(e){}
+  }
+
+  function v76ShowRemoteYutSequence(seat, yut){
+    if(!yut || !yut.name) return;
+    const sig = v76YutSig(yut);
+    if(!sig || (MP && MP.v76ShownRemoteYutSig === sig)) return;
+    if(MP) MP.v76ShownRemoteYutSig = sig;
+
+    const who = v76DisplayName(seat);
+    v76ClearYutTimers();
+    try{ v76RenderYutVisual(null, true, who); }catch(e){}
+    try{ sfx("roll"); }catch(e){}
+
+    v76ShowRemoteYutSequence._phaseTimer = setTimeout(()=>{
+      try{
+        v76ClearYutTimers();
+        v76RenderYutVisual(yut, false, who);
+        if(MP) MP.v73AllowYutOverlayUntil = Date.now() + 2400;
+      }catch(e){}
+      try{ sfx("card"); }catch(e){}
+      v76ShowRemoteYutSequence._hideTimer = setTimeout(()=>{
+        v76HideRemoteYutOverlay();
+      }, 2100);
+    }, 780);
+  }
+
+  function v76SuppressRollToastMessage(message, kind){
+    const text = String(message == null ? "" : message).trim();
+    if(kind === "roll") return true;
+    return /^.+:\s*(낙|백도|도|개|걸|윷|모)\s*나왔어!?$/.test(text);
+  }
+
+  if(typeof showEventToast === "function" && showEventToast.__v76Patched !== true){
+    const oldShowEventToastV76 = showEventToast;
+    showEventToast = function(message, kind, duration){
+      if(v76SuppressRollToastMessage(message, kind)) return;
+      return oldShowEventToastV76.apply(this, arguments);
+    };
+    showEventToast.__v76Patched = true;
+  }
+
+  function v76CanRollNow(){
+    if(!game || game.over || rolling || game.rollCharges <= 0) return false;
+    if(typeof isTeamRanked === "function" && isTeamRanked(game.turn)) return false;
+    const lockUntil = Math.max(window.v76RollLockUntil || 0, (MP && MP.v76RollLockUntil) || 0);
+    if(Date.now() < lockUntil) return false;
+    return true;
+  }
+
+  function v76RefreshRollButtons(){
+    const locked = Date.now() < Math.max(window.v76RollLockUntil || 0, (MP && MP.v76RollLockUntil) || 0);
+    document.querySelectorAll("#rollBtn,.mobileRollCircle").forEach(btn=>{
+      if(!btn) return;
+      const shouldDisable = locked || !game || game.over || rolling || game.rollCharges <= 0 || (typeof isTeamRanked === "function" && isTeamRanked(game.turn));
+      btn.disabled = !!shouldDisable;
+      btn.classList.toggle("v76RollLocked", !!locked);
+    });
+  }
+
+  function v76LockRoll(ms=1450){
+    const until = Date.now() + ms;
+    window.v76RollLockUntil = until;
+    if(MP){
+      MP.v76RollLockUntil = until;
+      MP.v76LocalRollUntil = Date.now() + 5200;
+    }
+    v76RefreshRollButtons();
+    setTimeout(v76RefreshRollButtons, ms + 40);
+  }
+
+  if(typeof roll === "function" && roll.__v76Patched !== true){
+    const oldRollV76 = roll;
+    roll = function(){
+      if(!v76CanRollNow()) return;
+      v76LockRoll(1500);
+      return oldRollV76.apply(this, arguments);
+    };
+    roll.__v76Patched = true;
+  }
+
+  function v76RebindRollButtons(){
+    const bind = (btn, handler)=>{
+      if(!btn || btn.dataset.v76Rebound === "1") return;
+      const fresh = btn.cloneNode(true);
+      fresh.removeAttribute("onclick");
+      fresh.onclick = null;
+      fresh.dataset.v71Rebound = "1";
+      fresh.dataset.v76Rebound = "1";
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener("click", e=>{
+        e.preventDefault();
+        e.stopPropagation();
+        handler();
+      });
+    };
+    bind(document.getElementById("rollBtn"), ()=>roll());
+    document.querySelectorAll(".mobileRollCircle").forEach(btn=>bind(btn, ()=>rollFromMobile()));
+    v76RefreshRollButtons();
+  }
+
+  if(typeof rollFromMobile === "function" && rollFromMobile.__v76Patched !== true){
+    const oldRollFromMobileV76 = rollFromMobile;
+    rollFromMobile = function(){
+      if(!v76CanRollNow()) return;
+      return oldRollFromMobileV76.apply(this, arguments);
+    };
+    rollFromMobile.__v76Patched = true;
+  }
+
+  if(typeof beep === "function" && beep.__v76Patched !== true){
+    const oldBeepV76 = beep;
+    beep = function(freq=440, duration=0.08, type="sine", gain=0.045){
+      const boosted = Math.min(0.30, Math.max(0.012, Number(gain || 0.045) * 1.55));
+      return oldBeepV76.call(this, freq, duration, type, boosted);
+    };
+    beep.__v76Patched = true;
+  }
+
+  function v76Vibrate(pattern){
+    try{
+      if(navigator && typeof navigator.vibrate === "function") navigator.vibrate(pattern || [140, 45, 140, 45, 90]);
+    }catch(e){}
+  }
+
+  if(typeof sfx === "function" && sfx.__v76Patched !== true){
+    const oldSfxV76 = sfx;
+    sfx = function(type){
+      const out = oldSfxV76.apply(this, arguments);
+      if(type === "capture"){
+        v76Vibrate([140, 45, 140, 45, 90]);
+        setTimeout(()=>v76Vibrate([90]), 190);
+      }
+      return out;
+    };
+    sfx.__v76Patched = true;
+  }
+
+  if(typeof mpApplyPayload === "function" && mpApplyPayload.__v76Patched !== true){
+    const oldMpApplyPayloadV76 = mpApplyPayload;
+    mpApplyPayload = function(payload){
+      const beforeYutSig = v76YutSig(MP && MP.lastYut);
+      const incomingYut = payload && payload.lastYut;
+      const incomingYutSig = v76YutSig(incomingYut);
+      const nextGame = payload && payload.game;
+      const rollerTeam = nextGame && typeof nextGame.turn === "number" ? nextGame.turn : (game && game.turn);
+      const freshRemoteRoll = !!incomingYutSig
+        && incomingYutSig !== beforeYutSig
+        && v76YutAgeMs(incomingYut) < 12000
+        && !v76MovedByThisClient(rollerTeam);
+
+      const out = oldMpApplyPayloadV76.apply(this, arguments);
+
+      if(freshRemoteRoll){
+        setTimeout(()=>v76ShowRemoteYutSequence(rollerTeam, incomingYut), 0);
+      }
+      setTimeout(v76RefreshRollButtons, 0);
+      return out;
+    };
+    mpApplyPayload.__v76Patched = true;
+  }
+
+  if(typeof render === "function" && render.__v76Patched !== true){
+    const oldRenderV76 = render;
+    render = function(){
+      const out = oldRenderV76.apply(this, arguments);
+      try{ v76RefreshRollButtons(); }catch(e){}
+      return out;
+    };
+    render.__v76Patched = true;
+  }
+
+  window.addEventListener("DOMContentLoaded", ()=>{
+    setTimeout(v76RebindRollButtons, 0);
+    setTimeout(v76RebindRollButtons, 600);
+    setTimeout(v76RebindRollButtons, 1600);
+  });
+  setTimeout(v76RebindRollButtons, 0);
+  setInterval(()=>{ v76RebindRollButtons(); v76RefreshRollButtons(); }, 1200);
 })();
 
 </script>
