@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="ko">
 <head>
@@ -8253,6 +8254,238 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     setTimeout(()=>{ try{ v74RefreshTurnLabels(); v74ScheduleRollReminder(); }catch(e){} }, 0);
   });
 })();
+
+
+/* v75: remote roll toast sync + observer capture feedback + louder sound.
+   Multiplayer bugs are just group projects wearing a socket connection. */
+(function(){
+  try{ document.title = "윷놀이 v75"; }catch(e){}
+  window.YUTNORI_VERSION = "v75";
+
+  function v75InstallLabel(){
+    try{
+      document.querySelectorAll("h2").forEach(h=>{
+        if(/친구랑 같이 하기 v\d+/i.test(h.textContent || "")) h.textContent = "친구랑 같이 하기 v75";
+      });
+    }catch(e){}
+  }
+  v75InstallLabel();
+  window.addEventListener("DOMContentLoaded", v75InstallLabel);
+
+  function v75YutSig(yut){
+    if(!yut) return "";
+    try{
+      if(typeof yut === "string") return yut;
+      return JSON.stringify({
+        id:yut.eventId || yut.rollId || yut.t || null,
+        name:yut.name || null,
+        faces:Array.isArray(yut.faces) ? yut.faces : null,
+        baekdoIndex:typeof yut.baekdoIndex === "number" ? yut.baekdoIndex : null,
+        nak:!!yut.nak
+      });
+    }catch(e){
+      return String((yut && yut.name) || "");
+    }
+  }
+
+  function v75YutAgeMs(yut){
+    if(!yut || typeof yut !== "object") return Infinity;
+    const raw = yut.eventId || yut.rollId || yut.t || "";
+    if(typeof raw === "number") return Date.now() - raw;
+    const m = String(raw).match(/^(\d{10,})/);
+    if(!m) return Infinity;
+    return Date.now() - Number(m[1]);
+  }
+
+  function v75SafeText(s){
+    return String(s == null ? "" : s).trim();
+  }
+
+  function v75DisplayName(seat){
+    try{
+      const n = Number(seat);
+      if(MP && Array.isArray(MP.players)){
+        const p = MP.players.find(x=>x && typeof x.seat === "number" && x.seat === n);
+        const nick = v75SafeText(p && p.name);
+        if(nick) return nick;
+      }
+      if(game && game.teams && game.teams[n] && v75SafeText(game.teams[n].name)) return v75SafeText(game.teams[n].name);
+      return `${n + 1}P`;
+    }catch(e){
+      return `${Number(seat) + 1}P`;
+    }
+  }
+
+  function v75SamePos(a, b){
+    return a === b || String(a) === String(b);
+  }
+
+  function v75Clone(obj){
+    try{ return JSON.parse(JSON.stringify(obj)); }catch(e){ return null; }
+  }
+
+  function v75MovedByThisClient(team){
+    return !!(MP && MP.connected && typeof MP.seat === "number" && MP.seat === team && Date.now() < (MP.v75LocalActionUntil || 0));
+  }
+
+  function v75DetectCapture(beforeGame, nextGame){
+    if(!beforeGame || !nextGame || !Array.isArray(beforeGame.pieces) || !Array.isArray(nextGame.pieces)) return null;
+    const moverTeam = typeof beforeGame.turn === "number" ? beforeGame.turn : nextGame.turn;
+    if(typeof moverTeam !== "number") return null;
+
+    const oldById = new Map(beforeGame.pieces.map(p=>[p && p.id, p]));
+    const captured = [];
+
+    for(const np of nextGame.pieces){
+      if(!np) continue;
+      const op = oldById.get(np.id);
+      if(!op || op.team === moverTeam) continue;
+
+      const wasOnBoard = !op.finished && op.pos !== null && op.pos !== "FINISH";
+      const nowWaiting = !np.finished && np.pos === null;
+      if(wasOnBoard && nowWaiting){
+        captured.push({id:np.id, team:op.team, pos:op.pos});
+      }
+    }
+
+    if(!captured.length) return null;
+
+    const counts = new Map();
+    captured.forEach(c=>{
+      const k = String(c.pos);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    });
+
+    let dest = captured[0].pos;
+    let best = 0;
+    counts.forEach((count, key)=>{
+      if(count > best){
+        best = count;
+        dest = key === "null" ? null : (key === "FINISH" ? "FINISH" : Number.isNaN(Number(key)) ? key : Number(key));
+      }
+    });
+
+    if(dest === null || dest === "FINISH") return null;
+
+    const moverAtDest = nextGame.pieces.some(p=>p && p.team === moverTeam && !p.finished && v75SamePos(p.pos, dest));
+    if(!moverAtDest) return null;
+
+    return {
+      moverTeam,
+      dest,
+      count:captured.length,
+      ids:captured.map(c=>c.id).sort()
+    };
+  }
+
+  function v75CaptureSig(info){
+    if(!info) return "";
+    return [info.moverTeam, info.dest, info.count, (info.ids || []).join(",")].join("|");
+  }
+
+  function v75ShowRemoteRollToast(seat, yut){
+    if(!yut || !yut.name) return;
+    const sig = v75YutSig(yut);
+    if(!sig || (MP && MP.v75ShownRemoteRollSig === sig)) return;
+    if(MP) MP.v75ShownRemoteRollSig = sig;
+
+    const who = v75DisplayName(seat);
+    const msg = `${who}: ${yut.name} 나왔어`;
+    try{ showEventToast(msg, "normal", 1700); }catch(e){}
+    try{ sfx("card"); }catch(e){}
+  }
+
+  function v75ShowRemoteCapture(info){
+    if(!info) return;
+    const sig = v75CaptureSig(info);
+    if(MP && MP.v75ShownCaptureSig === sig) return;
+    if(MP) MP.v75ShownCaptureSig = sig;
+
+    setTimeout(()=>{
+      try{ showBoardEffect(info.dest, `잡기 ×${info.count}`, "capture"); }catch(e){}
+      try{ showEventToast(`${v75DisplayName(info.moverTeam)} 상대 말 ${info.count}개 잡음!`, "long", 2200); }catch(e){}
+      try{ sfx("capture"); }catch(e){}
+    }, 240);
+  }
+
+  if(typeof beep === "function" && beep.__v75Patched !== true){
+    const oldBeepV75 = beep;
+    beep = function(freq=440, duration=0.08, type="sine", gain=0.045){
+      const boosted = Math.min(0.18, Math.max(0.01, Number(gain || 0.045) * 2.35));
+      return oldBeepV75.call(this, freq, duration, type, boosted);
+    };
+    beep.__v75Patched = true;
+  }
+
+  function v75Vibrate(pattern){
+    try{
+      if(navigator && typeof navigator.vibrate === "function") navigator.vibrate(pattern || [90, 45, 90]);
+    }catch(e){}
+  }
+
+  if(typeof sfx === "function" && sfx.__v75Patched !== true){
+    const oldSfxV75 = sfx;
+    sfx = function(type){
+      const out = oldSfxV75.apply(this, arguments);
+      if(type === "capture") v75Vibrate([110, 45, 110]);
+      return out;
+    };
+    sfx.__v75Patched = true;
+  }
+
+  if(typeof roll === "function" && roll.__v75Patched !== true){
+    const oldRollV75 = roll;
+    roll = function(){
+      if(MP) MP.v75LocalActionUntil = Date.now() + 4500;
+      return oldRollV75.apply(this, arguments);
+    };
+    roll.__v75Patched = true;
+  }
+
+  if(typeof moveSelected === "function" && moveSelected.__v75Patched !== true){
+    const oldMoveSelectedV75 = moveSelected;
+    moveSelected = async function(){
+      if(MP) MP.v75LocalActionUntil = Date.now() + 5000;
+      return oldMoveSelectedV75.apply(this, arguments);
+    };
+    moveSelected.__v75Patched = true;
+  }
+
+  if(typeof moveByHint === "function" && moveByHint.__v75Patched !== true){
+    const oldMoveByHintV75 = moveByHint;
+    moveByHint = function(){
+      if(MP) MP.v75LocalActionUntil = Date.now() + 5000;
+      return oldMoveByHintV75.apply(this, arguments);
+    };
+    moveByHint.__v75Patched = true;
+  }
+
+  if(typeof mpApplyPayload === "function" && mpApplyPayload.__v75Patched !== true){
+    const oldMpApplyPayloadV75 = mpApplyPayload;
+    mpApplyPayload = function(payload){
+      const beforeGame = v75Clone(game);
+      const beforeYutSig = v75YutSig(MP && MP.lastYut);
+      const incomingYut = payload && payload.lastYut;
+      const incomingYutSig = v75YutSig(incomingYut);
+      const nextGame = payload && payload.game;
+      const rollerTeam = nextGame && typeof nextGame.turn === "number" ? nextGame.turn : (beforeGame && beforeGame.turn);
+      const freshRemoteRoll = !!incomingYutSig
+        && incomingYutSig !== beforeYutSig
+        && v75YutAgeMs(incomingYut) < 9000
+        && !v75MovedByThisClient(rollerTeam);
+      const captureInfo = v75DetectCapture(beforeGame, nextGame);
+      const remoteCapture = captureInfo && !v75MovedByThisClient(captureInfo.moverTeam);
+
+      const out = oldMpApplyPayloadV75.apply(this, arguments);
+
+      if(freshRemoteRoll) setTimeout(()=>v75ShowRemoteRollToast(rollerTeam, incomingYut), 80);
+      if(remoteCapture) v75ShowRemoteCapture(captureInfo);
+      return out;
+    };
+    mpApplyPayload.__v75Patched = true;
+  }
+})();
+
 </script>
 </body>
 </html>
