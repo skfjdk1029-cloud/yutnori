@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="ko">
 <head>
@@ -7397,6 +7398,182 @@ window.addEventListener("DOMContentLoaded", mpChatBind);
     v71RebindRollButtons();
     v71ShowSeatIntro(false);
   }, 1400);
+})();
+
+
+/* v72: stop duplicate yut result overlay on selection/card clicks.
+   Selection is UI state, not game state. Broadcasting it like a dramatic weather alert was the bug. */
+(function(){
+  try{ document.title = "윷놀이 v72"; }catch(e){}
+  window.YUTNORI_VERSION = "v72";
+
+  function v72CloneClean(obj){
+    try{
+      const copy = JSON.parse(JSON.stringify(obj));
+      if(copy && copy.game && Array.isArray(copy.game.pieces)){
+        copy.game.pieces.forEach(p=>{
+          if(!p) return;
+          delete p.animating;
+          delete p.animX;
+          delete p.animY;
+        });
+      }
+      return copy;
+    }catch(e){
+      return obj;
+    }
+  }
+
+  function v72YutSig(yut){
+    if(!yut) return "";
+    try{
+      if(typeof yut === "string") return yut;
+      return JSON.stringify({
+        id:yut.eventId || yut.rollId || yut.t || null,
+        name:yut.name || null,
+        faces:Array.isArray(yut.faces) ? yut.faces : null,
+        baekdoIndex:typeof yut.baekdoIndex === "number" ? yut.baekdoIndex : null,
+        nak:!!yut.nak
+      });
+    }catch(e){
+      return String(yut && yut.name || "");
+    }
+  }
+
+  function v72StateSig(){
+    try{
+      return JSON.stringify(v72CloneClean({game:game || null, lastYut:(MP && MP.lastYut) || null}));
+    }catch(e){
+      return "";
+    }
+  }
+
+  function v72HideYutOverlays(){
+    try{ document.body.classList.remove("yutThrowing"); }catch(e){}
+    try{
+      const overlay = document.getElementById("pcYutOverlay");
+      if(overlay) overlay.classList.add("hidden");
+    }catch(e){}
+    try{
+      if(renderYut){
+        clearTimeout(renderYut._mobileTimer);
+        clearTimeout(renderYut._pcTimer);
+        clearTimeout(renderYut._guardTimer);
+        clearTimeout(renderYut._overlayTimer);
+      }
+    }catch(e){}
+  }
+
+  function v72RenderYutPanelSilent(resultData){
+    try{
+      const display = normalizeYutDisplay(resultData);
+      const stage = document.getElementById("yutStage");
+      const result = document.getElementById("yutResult");
+      if(stage){
+        stage.innerHTML = "";
+        for(let i=0;i<4;i++){
+          stage.appendChild(makeYutStick(display.faces[i], false, i === display.baekdoIndex, i === display.markedIndex));
+        }
+      }
+      if(result){
+        result.textContent = display.name ? `결과: ${display.name}` : `윷 던질 준비 · 백도윷 ${display.markedIndex + 1}번`;
+      }
+    }catch(e){}
+    v72HideYutOverlays();
+  }
+
+  if(typeof throwYutResult === "function" && throwYutResult.__v72Patched !== true){
+    const oldThrowYutResultV72 = throwYutResult;
+    throwYutResult = function(){
+      const r = oldThrowYutResultV72.call(this);
+      if(r && typeof r === "object" && !r.eventId){
+        r.eventId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+      }
+      return r;
+    };
+    throwYutResult.__v72Patched = true;
+  }
+
+  if(typeof renderYut === "function" && renderYut.__v72Patched !== true){
+    const oldRenderYutV72 = renderYut;
+    renderYut = function(resultData, isRolling){
+      const out = oldRenderYutV72.call(this, resultData, isRolling);
+      if(!isRolling && resultData && MP){
+        MP.v72ShownYutSig = v72YutSig(resultData);
+      }
+      return out;
+    };
+    renderYut.__v72Patched = true;
+  }
+
+  if(typeof mpSendNow === "function" && mpSendNow.__v72Patched !== true){
+    const oldMpSendNowV72 = mpSendNow;
+    mpSendNow = function(){
+      if(!MP || !MP.connected || !MP.ws || MP.ws.readyState !== WebSocket.OPEN || MP.applying || !game) return;
+      const sig = v72StateSig();
+      const forced = MP.lastSent === "" || Date.now() < (MP.v72ForceSendUntil || 0);
+      if(sig && sig === MP.v72LastSentSig && !forced) return;
+      const out = oldMpSendNowV72.call(this);
+      if(sig){
+        MP.v72LastSentSig = sig;
+        MP.v72ForceSendUntil = 0;
+      }
+      return out;
+    };
+    mpSendNow.__v72Patched = true;
+  }
+
+  if(typeof mpApplyPayload === "function" && mpApplyPayload.__v72Patched !== true){
+    const oldMpApplyPayloadV72 = mpApplyPayload;
+    mpApplyPayload = function(payload){
+      const incomingYutSig = v72YutSig(payload && payload.lastYut);
+      const previousYutSig = v72YutSig(MP && MP.lastYut);
+      const alreadyShownSig = MP && MP.v72ShownYutSig;
+      const suppressYutReplay = !!incomingYutSig && (incomingYutSig === previousYutSig || incomingYutSig === alreadyShownSig);
+      const out = oldMpApplyPayloadV72.call(this, payload);
+      if(suppressYutReplay){
+        v72RenderYutPanelSilent(payload && payload.lastYut);
+        if(MP) MP.v72ShownYutSig = incomingYutSig;
+      }
+      return out;
+    };
+    mpApplyPayload.__v72Patched = true;
+  }
+
+  if(typeof mpScheduleSend === "function" && mpScheduleSend.__v72Patched !== true){
+    const oldMpScheduleSendV72 = mpScheduleSend;
+    mpScheduleSend = function(){
+      if(!MP || !MP.connected || MP.applying || !game) return;
+      const sig = v72StateSig();
+      if(sig && sig === MP.v72LastSentSig && MP.lastSent !== "") return;
+      return oldMpScheduleSendV72.call(this);
+    };
+    mpScheduleSend.__v72Patched = true;
+  }
+
+  const oldRollV72 = roll;
+  roll = function(){
+    if(MP) MP.v72ForceSendUntil = Date.now() + 1800;
+    return oldRollV72.call(this);
+  };
+
+  const oldMoveSelectedV72 = moveSelected;
+  moveSelected = async function(forcedDest){
+    if(MP) MP.v72ForceSendUntil = Date.now() + 1800;
+    return oldMoveSelectedV72.call(this, forcedDest);
+  };
+
+  const oldMoveByHintV72 = moveByHint;
+  moveByHint = function(cardIndex, forcedDest){
+    if(MP) MP.v72ForceSendUntil = Date.now() + 1800;
+    return oldMoveByHintV72.call(this, cardIndex, forcedDest);
+  };
+
+  window.addEventListener("DOMContentLoaded", ()=>{
+    setTimeout(()=>{
+      try{ v72RenderYutPanelSilent((MP && MP.lastYut) || null); }catch(e){}
+    }, 0);
+  });
 })();
 
 </script>
